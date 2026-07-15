@@ -1,4 +1,4 @@
-import React, { Fragment, useEffect, useState } from 'react'
+import React, { Fragment, useEffect, useMemo, useState } from 'react'
 import { CustomCardView, CustomModal, CustomRow, Flex } from '@components/others';
 import { CustomPageTitle } from '@components/others/CustomPageTitle';
 import { Card, Col, Collapse, Form, Tooltip } from 'antd';
@@ -70,6 +70,31 @@ const ChitFundListView = () => {
 
     const [menberDetalView, setMenberDetalView] = useState({});
     const [findIds, setFindIds] = useState({});
+
+    // Effective share count used in the display and in the Demand Share Amount formula.
+    // It includes the Management share (typically 1) alongside the investor shares — per business
+    // rule the management holds a share in the pool.
+    const effectiveInvestersShareCount = useMemo(() => {
+        const investers = Number(findIds?.investers_share_count || 0);
+        const mgmt = Number(findIds?.management_share_count || 0);
+        return investers + mgmt;
+    }, [findIds?.investers_share_count, findIds?.management_share_count]);
+
+    // Demand Share Amount = (Management Invested Amount + Outer Invest Amount + Profit Amount) / Investers Share Count
+    // Using the same effective share count that is displayed to the user, so the two match.
+    const demandShareAmount = useMemo(() => {
+        const mgmtInvested = Number(findIds?.management_amt || 0);
+        const outerInvest = Number(findIds?.outer_invest_amount || 0);
+        const profitAmount = Number(findIds?.profit_amount || 0);
+        if (!effectiveInvestersShareCount) return 0;
+        const value = (mgmtInvested + outerInvest + profitAmount) / effectiveInvestersShareCount;
+        return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
+    }, [
+        findIds?.management_amt,
+        findIds?.outer_invest_amount,
+        findIds?.profit_amount,
+        effectiveInvestersShareCount,
+    ]);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     // ======  Modal Title and Content ========
@@ -211,7 +236,12 @@ const ChitFundListView = () => {
                             <div className="info-row">
                                 <h3 className="info-label">Investers Share Count </h3>
                                 <span>:</span>&nbsp;
-                                <span>{findIds?.investers_share_count}</span>
+                                <span data-testid="investers-share-count-value">{effectiveInvestersShareCount}</span>
+                            </div>
+                            <div className="info-row" data-testid="demand-share-amount-row">
+                                <h3 className="info-label">Demand Share Amount </h3>
+                                <span>:</span>&nbsp;
+                                <span data-testid="demand-share-amount-value">{demandShareAmount}</span>
                             </div>
                             <div className="info-row">
                                 <h3 className="info-label">Invest Retake Amount </h3>
