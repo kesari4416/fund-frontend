@@ -74,16 +74,6 @@ export const AddFestival = ({
       start_date: dayjs(startdate, dateFormat),
       end_date: dayjs(enddate, dateFormat),
     });
-    //------------- Penalty-----------------------
-
-    if(updatefestivallist?.penalty_amt > 100){
-      form.setFieldsValue({choice:"Amount"})
-      setDisablePenalty(true)
-    }
-    else{
-      setDisablePenalty(false)
-    }
-    //--------------
   };
   const festivalDate = (fedate) => {
     setDate(fedate);
@@ -107,15 +97,10 @@ export const AddFestival = ({
     setpenalty(data);
   };
   //---------- --- Handle Penalty onChange---------
-
-  const handlePenalty = (value) => {
-    if(value > 100){
-      form.setFieldsValue({choice:"Amount"})
-      setDisablePenalty(true)
-    }
-    else{
-      setDisablePenalty(false)
-    }
+  // Kept as a no-op onChange handler; the antd form rule validator enforces
+  // the 100% cap on submit.  (Any legacy state toggling is now dead.)
+  const handlePenalty = () => {
+    setDisablePenalty(false);
   }
 //-------------------
   const AddFestival = async (data) => {
@@ -315,6 +300,21 @@ export const AddFestival = ({
                 {
                   required: true,
                   message: "Please Enter a Penalty!",
+                },
+                {
+                  validator: (_, value) => {
+                    if (
+                      penalty === "Percentage" &&
+                      value !== undefined &&
+                      value !== null &&
+                      Number(value) > 100
+                    ) {
+                      return Promise.reject(
+                        new Error("Penalty percentage cannot exceed 100%")
+                      );
+                    }
+                    return Promise.resolve();
+                  },
                 },
               ]}
             />
