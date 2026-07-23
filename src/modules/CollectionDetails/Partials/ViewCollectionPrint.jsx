@@ -7,6 +7,7 @@ import { PrintWrapper } from "@components/common/Styled";
 import { PrintHolder } from "@modules/Bill/Style";
 import { Button } from "@components/form";
 import { Flex } from "@components/others";
+import WhatsappStatementButton from "./WhatsappStatementButton";
 
 const ViewCollectionPrint = ({ CollectionRecord }) => {
 
@@ -55,6 +56,11 @@ const ViewCollectionPrint = ({ CollectionRecord }) => {
         <Button.Primary
           text={<AiFillPrinter style={{ fontSize: "30px" }} />}
           onClick={handlePrint}
+          data-testid="collection-print-btn"
+        />
+        <WhatsappStatementButton
+          CollectionRecord={CollectionRecord}
+          templeName={templeData?.temple_name}
         />
       </Flex>
       <PrintWrapper>

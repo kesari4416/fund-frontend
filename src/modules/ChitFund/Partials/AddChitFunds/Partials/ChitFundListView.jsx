@@ -205,11 +205,6 @@ const ChitFundListView = () => {
                                 <span>{findIds?.management_retake}</span>
                             </div>
                             <div className="info-row">
-                                <h3 className="info-label">Retake mangement Share Count </h3>
-                                <span>:</span>&nbsp;
-                                <span>{findIds?.retake_management_share_count}</span>
-                            </div>
-                            <div className="info-row">
                                 <h3 className="info-label">Management Profit Precent </h3>
                                 <span>:</span>&nbsp;
                                 <span>{findIds?.set_profit_percent}</span>
@@ -234,11 +229,6 @@ const ChitFundListView = () => {
                                 <span>{findIds?.starting_date}</span>
                             </div>
                             <div className="info-row">
-                                <h3 className="info-label">Fixed Share Amount </h3>
-                                <span>:</span>&nbsp;
-                                <span>{findIds?.fixed_chitfund_amount}</span>
-                            </div>
-                            <div className="info-row">
                                 <h3 className="info-label">Outer Invest Amount </h3>
                                 <span>:</span>&nbsp;
                                 <span>{findIds?.outer_invest_amount}</span>
@@ -257,11 +247,6 @@ const ChitFundListView = () => {
                                 <h3 className="info-label">Invest Retake Amount </h3>
                                 <span>:</span>&nbsp;
                                 <span>{findIds?.invest_retake}</span>
-                            </div>
-                            <div className="info-row">
-                                <h3 className="info-label">Retake Invester Share Amount</h3>
-                                <span>:</span>&nbsp;
-                                <span>{findIds?.retake_investers_share_count}</span>
                             </div>
                             <div className="info-row">
                                 <h3 className="info-label">Interest Precent</h3>
@@ -340,16 +325,46 @@ const ChitFundListView = () => {
                                     </span>
                                   </div>
                                   <div className="info-row">
+                                    <h3 className="info-label">Share Amount  </h3>
+                                    <span>:</span>&nbsp;
+                                    <span data-testid="member-0-share-amount">
+                                      {(
+                                        Number(demandShareAmount || 0) *
+                                        Number(findIds?.management_share_count || 0)
+                                      ).toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <div className="info-row">
                                     <h3 className="info-label">Retake Share Count  </h3>
                                     <span>:</span>&nbsp;
                                     <span>{findIds?.retake_management_share_count ?? 0}</span>
                                   </div>
                                   {/*
                                     Application Date & Settlement Date are
-                                    intentionally omitted for Member 0 –
-                                    Management does not file a settlement
-                                    application, so these fields do not apply.
+                                    displayed ONLY when management has an
+                                    application_date recorded (currently
+                                    optional / rare — Management typically
+                                    holds a permanent share). Settlement Date
+                                    is computed as Application Date + 60 days.
                                   */}
+                                  {findIds?.management_application_date && (
+                                    <>
+                                      <div className="info-row">
+                                        <h3 className="info-label">Application Date </h3>
+                                        <span>:</span>&nbsp;
+                                        <span data-testid="member-0-application-date">
+                                          {findIds.management_application_date}
+                                        </span>
+                                      </div>
+                                      <div className="info-row">
+                                        <h3 className="info-label">Settlement Date  </h3>
+                                        <span>:</span>&nbsp;
+                                        <span data-testid="member-0-settlement-date">
+                                          {computeSettlementDate(findIds.management_application_date)}
+                                        </span>
+                                      </div>
+                                    </>
+                                  )}
                                 </Totalstyle>
                               </Col>
                             </CustomRow>
