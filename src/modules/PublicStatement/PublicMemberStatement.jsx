@@ -25,6 +25,39 @@ const Card = styled.div`
   margin: 0 auto 16px auto;
 `;
 
+const WideCard = styled(Card)`
+  max-width: 1100px;
+  overflow-x: auto;
+`;
+
+const LedgerTable = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  th, td {
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    text-align: left;
+    white-space: nowrap;
+  }
+  th {
+    background: #f8fafc;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  tbody tr:nth-child(even) td {
+    background: #fafafa;
+  }
+  td.num { text-align: right; }
+`;
+
+const fmtDMY = (iso) => {
+  if (!iso) return "-";
+  const [y, m, d] = String(iso).split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+};
+
 const Row = styled.div`
   display: flex;
   justify-content: space-between;
@@ -103,7 +136,7 @@ const PublicMemberStatement = () => {
       </Wrap>
     );
 
-  const { member, period, collections, totals, pending_dues } = state.data;
+  const { member, period, collections, totals, pending_dues, ledger, ledger_totals } = state.data;
 
   return (
     <Wrap data-testid="statement-root">
@@ -120,6 +153,68 @@ const PublicMemberStatement = () => {
         </Muted>
       </Card>
 
+      <WideCard>
+        <Title style={{ fontSize: 16, marginBottom: 12 }}>Balance sheet</Title>
+        {(!ledger || ledger.length === 0) ? (
+          <Muted data-testid="statement-ledger-empty">
+            No entries in the last 12 months.
+          </Muted>
+        ) : (
+          <LedgerTable data-testid="statement-ledger-table">
+            <thead>
+              <tr>
+                <th>Sl No</th>
+                <th>Date</th>
+                <th>Particulars</th>
+                <th>Name</th>
+                <th className="num">Credit</th>
+                <th className="num">Debit</th>
+                <th className="num">Balance</th>
+                <th>Penalty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledger.map((r) => (
+                <tr key={r.sl_no} data-testid={`statement-ledger-row-${r.sl_no}`}>
+                  <td>{r.sl_no}</td>
+                  <td>{fmtDMY(r.date)}</td>
+                  <td>{r.particulars}</td>
+                  <td>{r.name}</td>
+                  <td className="num">{Number(r.credit).toFixed(2)}</td>
+                  <td className="num">{Number(r.debit).toFixed(2)}</td>
+                  <td className="num" style={{ fontWeight: r.balance > 0 ? 700 : 400, color: r.balance > 0 ? "#b91c1c" : "#0f172a" }}>
+                    {Number(r.balance).toFixed(2)}
+                  </td>
+                  <td
+                    style={{
+                      color: r.penalty === "Yes" ? "#0F5132" : "#b91c1c",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {r.penalty}
+                  </td>
+                </tr>
+              ))}
+              {ledger_totals && (
+                <tr data-testid="statement-ledger-totals" style={{ background: "#f1f5f9" }}>
+                  <td colSpan={4} style={{ fontWeight: 700, textAlign: "right" }}>Total</td>
+                  <td className="num" style={{ fontWeight: 700 }}>
+                    {Number(ledger_totals.credit).toFixed(2)}
+                  </td>
+                  <td className="num" style={{ fontWeight: 700 }}>
+                    {Number(ledger_totals.debit).toFixed(2)}
+                  </td>
+                  <td className="num" style={{ fontWeight: 700, color: "#b91c1c" }}>
+                    {Number(ledger_totals.balance).toFixed(2)}
+                  </td>
+                  <td></td>
+                </tr>
+              )}
+            </tbody>
+          </LedgerTable>
+        )}
+      </WideCard>
+
       <Card>
         <Row>
           <strong>Total collections received (1 year)</strong>
@@ -129,6 +224,23 @@ const PublicMemberStatement = () => {
           <span>Number of payments</span>
           <span data-testid="statement-total-count">{totals.count}</span>
         </Row>
+        {(totals.interest ?? 0) > 0 && (
+          <Row>
+            <span>Interest paid</span>
+            <span data-testid="statement-total-interest">{fmt(totals.interest)}</span>
+          </Row>
+        )}
+        {(totals.penalty ?? 0) > 0 && (
+          <Row>
+            <span>Penalty paid</span>
+            <span
+              data-testid="statement-total-penalty"
+              style={{ color: "#b91c1c", fontWeight: 700 }}
+            >
+              {fmt(totals.penalty)}
+            </span>
+          </Row>
+        )}
       </Card>
 
       <Card>
@@ -139,21 +251,42 @@ const PublicMemberStatement = () => {
           </Muted>
         ) : (
           <div style={{ marginTop: 8 }} data-testid="statement-payments-list">
-            {collections.map((c) => (
-              <Row key={c.id}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{c.category || "—"}</div>
-                  <Muted>
-                    {c.date} · {c.payment_mode || "-"}
-                    {c.collection_no ? ` · #${c.collection_no}` : ""}
-                  </Muted>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div>{fmt(c.amount)}</div>
-                  <Muted>Running: {fmt(c.running_total)}</Muted>
-                </div>
-              </Row>
-            ))}
+            {collections.map((c) => {
+              const isInterest =
+                c.category === "Management Interest" ||
+                c.category === "Chit Interest";
+              const hasPenalty = Number(c.penalty_amount || 0) > 0;
+              return (
+                <Row key={c.id} data-testid={`statement-payment-${c.id}`}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{c.category || "—"}</div>
+                    <Muted>
+                      {c.date} · {c.payment_mode || "-"}
+                      {c.collection_no ? ` · #${c.collection_no}` : ""}
+                    </Muted>
+                    {isInterest && (
+                      <Muted data-testid={`statement-payment-${c.id}-breakdown`}>
+                        P: {fmt(c.principal_amount)} · I:{" "}
+                        {fmt(c.interest_amount)} · Pen:{" "}
+                        {fmt(c.penalty_amount)}
+                      </Muted>
+                    )}
+                    {!isInterest && hasPenalty && (
+                      <Muted
+                        data-testid={`statement-payment-${c.id}-penalty`}
+                        style={{ color: "#b91c1c" }}
+                      >
+                        Penalty: {fmt(c.penalty_amount)}
+                      </Muted>
+                    )}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div>{fmt(c.amount)}</div>
+                    <Muted>Running: {fmt(c.running_total)}</Muted>
+                  </div>
+                </Row>
+              );
+            })}
           </div>
         )}
       </Card>
