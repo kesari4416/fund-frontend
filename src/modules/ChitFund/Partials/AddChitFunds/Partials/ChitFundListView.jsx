@@ -13,7 +13,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import { AllChitList, getChitFundList } from '@modules/ChitFund/ChitFundSlice';
 import { BondPaper } from './BondPaper';
 import { IoIosPaper } from 'react-icons/io';
-import { CaretDownOutlined, CaretRightOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
 // Business rule: Settlement Date = Application Date + 60 days.
@@ -112,12 +111,6 @@ const ChitFundListView = () => {
     const [modalTitle, setModalTitle] = useState("");
     const [modalContent, setModalContent] = useState(null);
 
-    // Pending members breakdown expander (fetched from backend)
-    const [showPendingBreakdown, setShowPendingBreakdown] = useState(false);
-    const [pendingData, setPendingData] = useState(null);
-    const [pendingLoading, setPendingLoading] = useState(false);
-    const [pendingError, setPendingError] = useState(null);
-
     // ----------  Form Reset UseState ---------
     const [modelwith, setModelwith] = useState(0);
 
@@ -173,52 +166,38 @@ const ChitFundListView = () => {
         return Number(val) || 0;
     };
 
-    // Management Amount = Total Profit Amount − Σ (Share Amount of each investor member)
-    // "Each member" refers to Member 1..N (outer investors). Management (Member 0)
-    // is excluded because this figure represents what remains for management.
+    // Per-investor PROFIT SHARE (the portion of profit_amount that each
+    // investor receives, based on their share_count). This is what
+    // reconciles with Management Amount so that:
+    //     Profit Amount = Σ Investor Profit Shares + Management Amount
+    // (whereas the displayed "Share Amount" on each card is the GROSS
+    // settlement value, i.e. their investment + their profit share.)
+    const totalShareCount = effectiveInvestersShareCount;
+    const investorsProfitShareTotal = useMemo(() => {
+        const profit = Number(findIds?.profit_amount || 0);
+        const investers = Number(findIds?.investers_share_count || 0);
+        if (!totalShareCount) return 0;
+        const value = (profit * investers) / totalShareCount;
+        return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
+    }, [findIds?.profit_amount, findIds?.investers_share_count, totalShareCount]);
+
+    // Management Amount = Profit Amount − Σ (Profit Share of each investor member)
+    // Equivalently: profit_amount × management_share_count / total_share_count.
+    // Sum-check enforced below via `reconciliationDelta` so any rounding
+    // drift is surfaced to the operator instead of silently hidden.
     const managementAmount = useMemo(() => {
         const profit = Number(findIds?.profit_amount || 0);
-        const totalInvestorShare = (MemDetails || []).reduce(
-            (sum, m) => sum + getMemberShareAmount(m),
-            0,
-        );
-        const value = profit - totalInvestorShare;
+        const value = profit - investorsProfitShareTotal;
         return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
-    }, [findIds?.profit_amount, MemDetails]);
+    }, [findIds?.profit_amount, investorsProfitShareTotal]);
 
-    // Pending members = investors whose per-member balance (share_amount − collected)
-    // is still > 0 AND who are not yet settled.  NOTE: kept for backward compat
-    // with any downstream consumers – the panel now uses `pendingData` from
-    // the /pending_borrowers/ endpoint below.
-    const pendingMembers = useMemo(() => [], []);
-
-    const totalPendingBalanceFromMembers = 0;
-
-    // Fetch pending Chit-Fund-Interest borrowers when the panel is opened.
-    // Cached on first successful load so re-toggling is instant.
-    useEffect(() => {
-        if (!showPendingBreakdown || pendingData || pendingLoading) return;
-        let cancelled = false;
-        setPendingLoading(true);
-        setPendingError(null);
-        request
-            .get(`chit_fund/pending_borrowers/${id}/`)
-            .then((resp) => {
-                if (!cancelled) setPendingData(resp.data);
-            })
-            .catch((err) => {
-                if (!cancelled)
-                    setPendingError(
-                        err?.response?.data?.detail || 'Failed to load pending borrowers'
-                    );
-            })
-            .finally(() => {
-                if (!cancelled) setPendingLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [showPendingBreakdown, id]);
+    // Reconciliation: (Σ Investor Profit Shares + Management Amount) − Profit.
+    // Should be ≈ 0. Anything above ₹1 indicates a data issue and is shown
+    // to the operator as a red warning.
+    const reconciliationDelta = useMemo(() => {
+        const profit = Number(findIds?.profit_amount || 0);
+        return Number((investorsProfitShareTotal + managementAmount - profit).toFixed(2));
+    }, [findIds?.profit_amount, investorsProfitShareTotal, managementAmount]);
 
     const handlebondClick = (values) => {
         setModelwith(900)
@@ -287,11 +266,31 @@ const ChitFundListView = () => {
                             <div className="info-row" data-testid="management-amount-row">
                                 <h3 className="info-label">Management Amount </h3>
                                 <span>:</span>&nbsp;
-                                <Tooltip title="Total Profit Amount − Σ Share Amount of each investor member">
+                                <Tooltip
+                                    title={`Management's profit share = Profit × ${findIds?.management_share_count || 0} / ${totalShareCount || 0}. Investors' total profit share: ₹ ${investorsProfitShareTotal.toFixed(2)}`}
+                                >
                                     <span style={{ fontWeight: 600, color: '#0F5132' }} data-testid="management-amount-value">
                                         ₹ {managementAmount.toFixed(2)}
                                     </span>
                                 </Tooltip>
+                                &nbsp;&nbsp;
+                                {Math.abs(reconciliationDelta) < 1 ? (
+                                    <span
+                                        data-testid="management-amount-reconciled"
+                                        style={{ fontSize: 12, color: '#0F5132' }}
+                                        title={`✓ Σ Investor Profit Shares (₹ ${investorsProfitShareTotal.toFixed(2)}) + Management Amount (₹ ${managementAmount.toFixed(2)}) = Profit (₹ ${Number(findIds?.profit_amount || 0).toFixed(2)})`}
+                                    >
+                                        ✓ reconciled
+                                    </span>
+                                ) : (
+                                    <span
+                                        data-testid="management-amount-mismatch"
+                                        style={{ fontSize: 12, color: '#b91c1c', fontWeight: 700 }}
+                                        title={`Delta = ${reconciliationDelta}`}
+                                    >
+                                        ⚠ mismatch (Δ {reconciliationDelta})
+                                    </span>
+                                )}
                             </div>
                         </Totalstyle>
                     </Col>
@@ -347,104 +346,25 @@ const ChitFundListView = () => {
                                   ).toFixed(2)}
                                 </span>
                                 &nbsp;&nbsp;
-                                <Tooltip title={showPendingBreakdown ? 'Hide member breakdown' : 'View member breakdown'}>
-                                    <button
-                                        type="button"
-                                        data-testid="pending-breakdown-toggle"
-                                        onClick={() => setShowPendingBreakdown((v) => !v)}
-                                        style={{
-                                            border: '1px solid #b91c1c',
-                                            background: showPendingBreakdown ? '#b91c1c' : '#fff',
-                                            color: showPendingBreakdown ? '#fff' : '#b91c1c',
-                                            borderRadius: 4,
-                                            cursor: 'pointer',
-                                            padding: '2px 8px',
-                                            fontSize: 14,
-                                            lineHeight: 1,
-                                        }}
-                                        aria-label="Toggle pending breakdown"
-                                        aria-expanded={showPendingBreakdown}
-                                    >
-                                        {showPendingBreakdown ? <CaretDownOutlined /> : <CaretRightOutlined />}
-                                    </button>
-                                </Tooltip>
-                            </div>
-                            {showPendingBreakdown && (
-                                <div
-                                    data-testid="pending-breakdown-panel"
+                                <a
+                                    href={`/chit-fund/${id}/pending-borrowers`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    data-testid="pending-borrowers-open-link"
                                     style={{
-                                        border: '1px solid #fecaca',
-                                        background: '#fff5f5',
+                                        padding: '2px 10px',
                                         borderRadius: 6,
-                                        padding: '10px 12px',
-                                        margin: '4px 0 12px 0',
+                                        border: '1px solid #b91c1c',
+                                        background: '#fff',
+                                        color: '#b91c1c',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        textDecoration: 'none',
                                     }}
                                 >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                        <strong style={{ color: '#7f1d1d' }}>Pending borrowers breakdown</strong>
-                                        {pendingData && (
-                                            <span data-testid="pending-breakdown-count" style={{ fontSize: 12, color: '#7f1d1d' }}>
-                                                {pendingData.count} pending · ₹ {Number(pendingData.total_pending_balance || 0).toFixed(2)}
-                                            </span>
-                                        )}
-                                    </div>
-                                    {pendingLoading && (
-                                        <div data-testid="pending-breakdown-loading" style={{ fontSize: 13, color: '#6b7280', padding: '6px 0' }}>
-                                            Loading pending borrowers…
-                                        </div>
-                                    )}
-                                    {pendingError && (
-                                        <div data-testid="pending-breakdown-error" style={{ fontSize: 13, color: '#b91c1c', padding: '6px 0' }}>
-                                            {pendingError}
-                                        </div>
-                                    )}
-                                    {!pendingLoading && !pendingError && pendingData && pendingData.borrowers?.length === 0 && (
-                                        <div data-testid="pending-breakdown-empty" style={{ fontSize: 13, color: '#6b7280', padding: '6px 0' }}>
-                                            No borrowers with pending balance.
-                                        </div>
-                                    )}
-                                    {!pendingLoading && !pendingError && pendingData && pendingData.borrowers?.length > 0 && (
-                                        <div style={{ overflowX: 'auto' }}>
-                                            <table
-                                                data-testid="pending-breakdown-table"
-                                                style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}
-                                            >
-                                                <thead>
-                                                    <tr style={{ background: '#fee2e2', color: '#7f1d1d' }}>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Borrower</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Start Date</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>End Date</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Days (from start)</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Days (from last pay)</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Principal</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Paid</th>
-                                                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Balance</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {pendingData.borrowers.map((m) => (
-                                                        <tr key={m.id} data-testid={`pending-row-${m.id}`} style={{ borderBottom: '1px solid #fecaca' }}>
-                                                            <td style={{ padding: '6px 8px' }} data-testid={`pending-row-${m.id}-name`}>
-                                                                {m.name || '-'}
-                                                                {m.mobile ? <div style={{ fontSize: 11, color: '#6b7280' }}>{m.mobile}</div> : null}
-                                                            </td>
-                                                            <td style={{ padding: '6px 8px' }}>{m.start_date || '-'}</td>
-                                                            <td style={{ padding: '6px 8px' }}>{m.end_date || '-'}</td>
-                                                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>{m.days_from_start ?? '-'}</td>
-                                                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>{m.days_from_last_payment ?? '-'}</td>
-                                                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>₹ {Number(m.principal_amt || 0).toFixed(2)}</td>
-                                                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>₹ {Number(m.principal_paid || 0).toFixed(2)}</td>
-                                                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#b91c1c', fontWeight: 700 }} data-testid={`pending-row-${m.id}-balance`}>
-                                                                ₹ {Number(m.balance_amt || 0).toFixed(2)}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
+                                    View details →
+                                </a>
+                            </div>
                             <CardFooterStyle>
                                 <h3 className="info-label-footer">Cash In Hand Amount&nbsp; :&nbsp;&nbsp;<span style={{color:'green'}}>₹&nbsp;{findIds?.cash_inhand_amount}</span> </h3>
                             </CardFooterStyle>
