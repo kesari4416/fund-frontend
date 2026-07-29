@@ -11,6 +11,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { FaWhatsapp } from 'react-icons/fa'
 import { IoPrint } from 'react-icons/io5'
 import { useReactToPrint } from 'react-to-print'
+import { useSearchParams } from 'react-router-dom'
 import CommonManagePrint from './TabPrintPages/CommonManagePrint'
 import styled from 'styled-components'
 import { toast } from 'react-toastify'
@@ -167,11 +168,24 @@ export const MemberBalanceSheet = ({ datas }) => {
     const [filterTableData, setFilterTableData] = useState([])
     const [dateRange, setDateRange] = useState(dayjs().format("YYYY-MM-DD"));
 
+    // Rows from the last 12 months only (the "1 year statement" the
+    // operator shares over WhatsApp). Falls back to everything if the
+    // row's reportdate is missing / unparseable.
+    const oneYearAgo = dayjs().subtract(1, "year").startOf("day");
+    const filterLastYear = (rows) => {
+        if (!Array.isArray(rows)) return [];
+        return rows.filter((r) => {
+            if (!r?.reportdate) return true;
+            const d = dayjs(r.reportdate);
+            return d.isValid() ? d.isAfter(oneYearAgo) : true;
+        });
+    };
+
     let BalanSheetdata
     if (filterTableData.length > 1) {
         BalanSheetdata = filterTableData
     } else {
-        BalanSheetdata = datas?.temple_mem_balancesheet
+        BalanSheetdata = filterLastYear(datas?.temple_mem_balancesheet)
     }
 
     const BalanSheetID = datas?.profile
@@ -243,6 +257,36 @@ export const MemberBalanceSheet = ({ datas }) => {
         content: () => componentRef.current,
     });
 
+    // WhatsApp share flow: URL params carry the receipt details for the
+    // payment that just happened + a print=1 flag that auto-triggers the
+    // browser's Save-as-PDF dialog so the recipient gets a single PDF
+    // containing Receipt + 1-Year Balance Sheet.
+    const [searchParams] = useSearchParams();
+    const autoPrint = searchParams.get('print') === '1';
+    const receipt = {
+        no: searchParams.get('receipt_no') || '',
+        amt: searchParams.get('receipt_amt') || '',
+        date: searchParams.get('receipt_date') || '',
+        purpose: searchParams.get('receipt_purpose') || '',
+        mode: searchParams.get('receipt_mode') || '',
+    };
+    const hasReceipt = Boolean(receipt.no || receipt.amt);
+
+    // Fire the browser print dialog once the balance-sheet data lands.
+    // Guarded so it only triggers once — subsequent tableData updates
+    // (e.g. from date-range submit) don't re-open the dialog.
+    const printedRef = useRef(false);
+    useEffect(() => {
+        if (!autoPrint || printedRef.current) return;
+        if (!tableData || tableData.length === 0) return;
+        printedRef.current = true;
+        // A short delay lets fonts / CSS settle before print snapshots.
+        // eslint-disable-next-line no-console
+        console.log("[BalanceSheet] Auto-triggering print dialog…");
+        const t = setTimeout(() => handlePrint(), 800);
+        return () => clearTimeout(t);
+    }, [autoPrint, tableData, handlePrint]);
+
     const TabPaidHistory = [
         {
             title: 'Sl No',
@@ -292,8 +336,9 @@ export const MemberBalanceSheet = ({ datas }) => {
                     <a href="https://web.whatsapp.com/" target="blank">
                         <Button.Primary text={"Share"} icon={<FaWhatsapp />} />
                     </a>
-                    <Button.Secondary text={"Print"} icon={<IoPrint />}
+                    <Button.Secondary text={"Download PDF"} icon={<IoPrint />}
                         onClick={handlePrint}
+                        data-testid="balance-sheet-download-pdf-btn"
                     />
                 </Flex>
 
@@ -314,8 +359,62 @@ export const MemberBalanceSheet = ({ datas }) => {
                 <PrintHolder ref={componentRef}>
                     <PrintShowData className="PrintShowDatadd">
                         <CommonManagePrint ProfileRecord={BalanSheetID} /><br />
-                        <h3 style={{ marginLeft: '10px' }}>Balance Sheet Details :-</h3><br />
+                        {hasReceipt && (
+                            <div
+                                data-testid="print-receipt-block"
+                                style={{
+                                    margin: '0 10px 20px 10px',
+                                    padding: '14px 18px',
+                                    border: '1px dashed #999',
+                                    borderRadius: 6,
+                                }}
+                            >
+                                <h3 style={{ margin: 0, marginBottom: 8 }}>Payment Receipt</h3>
+                                {receipt.no && (
+                                    <p style={{ margin: '4px 0' }}>
+                                        <strong>Receipt No:</strong> {receipt.no}
+                                    </p>
+                                )}
+                                {receipt.date && (
+                                    <p style={{ margin: '4px 0' }}>
+                                        <strong>Date:</strong> {receipt.date}
+                                    </p>
+                                )}
+                                {receipt.purpose && (
+                                    <p style={{ margin: '4px 0' }}>
+                                        <strong>Purpose:</strong> {receipt.purpose}
+                                    </p>
+                                )}
+                                {receipt.mode && (
+                                    <p style={{ margin: '4px 0' }}>
+                                        <strong>Payment Mode:</strong> {receipt.mode}
+                                    </p>
+                                )}
+                                {receipt.amt && (
+                                    <p style={{ margin: '4px 0', fontSize: '15px' }}>
+                                        <strong>Amount Paid:</strong> ₹ {receipt.amt}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                        <h3 style={{ marginLeft: '10px' }}>1-Year Balance Sheet Statement</h3>
+                        <p style={{ marginLeft: '10px', color: '#555' }}>
+                            Period: {oneYearAgo.format('DD-MMM-YYYY')} &nbsp;→&nbsp; {dayjs().format('DD-MMM-YYYY')}
+                        </p>
+                        <br />
                         <CustomStandardTable columns={TabPaidHistory} data={tableData} pagination={false} />
+                        <Flex flexend={'right'} margin={"20px"} gap={'30px'} aligncenter>
+                            <h4>Total Credit :</h4>
+                            <h4>₹ {(tableData || []).reduce((s, r) => s + (parseFloat(r.credit_amt) || 0), 0).toFixed(2)}</h4>
+                            <h4>Total Debit :</h4>
+                            <h4>₹ {(tableData || []).reduce((s, r) => s + (parseFloat(r.debit_amt) || 0), 0).toFixed(2)}</h4>
+                            <h4>Closing Balance :</h4>
+                            <h4>₹ {(() => {
+                                const arr = tableData || [];
+                                if (arr.length === 0) return '0.00';
+                                return (parseFloat(arr[arr.length - 1].balance_amt) || 0).toFixed(2);
+                            })()}</h4>
+                        </Flex>
                     </PrintShowData>
                 </PrintHolder>
             </Form>

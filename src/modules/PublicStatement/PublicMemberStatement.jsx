@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import styled from "styled-components";
 
@@ -96,6 +96,31 @@ const PublicMemberStatement = () => {
   const { token } = useParams();
   const [state, setState] = useState({ loading: true, error: null, data: null });
 
+  // WhatsApp share flow: URL params carry the receipt of the just-made
+  // payment + a print=1 flag that auto-triggers the browser Save-as-PDF
+  // dialog so the recipient sees Receipt + Balance Sheet as one PDF —
+  // WITHOUT needing to log into the temple admin portal.
+  const [searchParams] = useSearchParams();
+  const autoPrint = searchParams.get("print") === "1";
+  const receipt = {
+    no: searchParams.get("receipt_no") || "",
+    amt: searchParams.get("receipt_amt") || "",
+    date: searchParams.get("receipt_date") || "",
+    purpose: searchParams.get("receipt_purpose") || "",
+    mode: searchParams.get("receipt_mode") || "",
+  };
+  const hasReceipt = Boolean(receipt.no || receipt.amt);
+
+  const printedRef = useRef(false);
+  useEffect(() => {
+    if (!autoPrint || printedRef.current) return;
+    if (state.loading || state.error) return;
+    printedRef.current = true;
+    console.log("[MemberStatement] Auto-triggering print dialog…");
+    const t = setTimeout(() => window.print(), 800);
+    return () => clearTimeout(t);
+  }, [autoPrint, state.loading, state.error]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -140,6 +165,42 @@ const PublicMemberStatement = () => {
 
   return (
     <Wrap data-testid="statement-root">
+      {hasReceipt && (
+        <Card data-testid="statement-receipt">
+          <Title style={{ fontSize: 18 }}>Payment Receipt</Title>
+          {receipt.no && (
+            <Row>
+              <span>Receipt No</span>
+              <strong>{receipt.no}</strong>
+            </Row>
+          )}
+          {receipt.date && (
+            <Row>
+              <span>Date</span>
+              <strong>{receipt.date}</strong>
+            </Row>
+          )}
+          {receipt.purpose && (
+            <Row>
+              <span>Purpose</span>
+              <strong>{receipt.purpose}</strong>
+            </Row>
+          )}
+          {receipt.mode && (
+            <Row>
+              <span>Payment Mode</span>
+              <strong>{receipt.mode}</strong>
+            </Row>
+          )}
+          {receipt.amt && (
+            <Row>
+              <strong>Amount Paid</strong>
+              <Chip>{`\u20B9 ${receipt.amt}`}</Chip>
+            </Row>
+          )}
+        </Card>
+      )}
+
       <Card>
         <Title data-testid="statement-member-name">
           {[member.name, member.last_name].filter(Boolean).join(" ")}
@@ -240,54 +301,6 @@ const PublicMemberStatement = () => {
               {fmt(totals.penalty)}
             </span>
           </Row>
-        )}
-      </Card>
-
-      <Card>
-        <Title style={{ fontSize: 16 }}>Payments (most recent first)</Title>
-        {collections.length === 0 ? (
-          <Muted style={{ marginTop: 12 }} data-testid="statement-no-payments">
-            No payments recorded in the last 12 months.
-          </Muted>
-        ) : (
-          <div style={{ marginTop: 8 }} data-testid="statement-payments-list">
-            {collections.map((c) => {
-              const isInterest =
-                c.category === "Management Interest" ||
-                c.category === "Chit Interest";
-              const hasPenalty = Number(c.penalty_amount || 0) > 0;
-              return (
-                <Row key={c.id} data-testid={`statement-payment-${c.id}`}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{c.category || "—"}</div>
-                    <Muted>
-                      {c.date} · {c.payment_mode || "-"}
-                      {c.collection_no ? ` · #${c.collection_no}` : ""}
-                    </Muted>
-                    {isInterest && (
-                      <Muted data-testid={`statement-payment-${c.id}-breakdown`}>
-                        P: {fmt(c.principal_amount)} · I:{" "}
-                        {fmt(c.interest_amount)} · Pen:{" "}
-                        {fmt(c.penalty_amount)}
-                      </Muted>
-                    )}
-                    {!isInterest && hasPenalty && (
-                      <Muted
-                        data-testid={`statement-payment-${c.id}-penalty`}
-                        style={{ color: "#b91c1c" }}
-                      >
-                        Penalty: {fmt(c.penalty_amount)}
-                      </Muted>
-                    )}
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div>{fmt(c.amount)}</div>
-                    <Muted>Running: {fmt(c.running_total)}</Muted>
-                  </div>
-                </Row>
-              );
-            })}
-          </div>
         )}
       </Card>
 

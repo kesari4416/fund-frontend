@@ -15,20 +15,41 @@ const API_BASE =
 // may hit browser URL-length limits (~8 KB); if that ever happens the fetch
 // will still open WhatsApp, just truncated by the OS/browser.
 
-const buildMemberStatementLink = (token) => {
-  const origin =
-    typeof window !== "undefined" && window.location?.origin
-      ? window.location.origin
-      : "";
-  return `${origin}/statement/${token}`;
+const buildMemberStatementLink = (token, memberId, receipt, apiBase, category) => {
+  // Direct-PDF URL — clicking the WhatsApp link opens the PDF file straight
+  // in the browser / mobile viewer. No portal login, no HTML page, no JS —
+  // just a `Content-Type: application/pdf` response from the backend.
+  //
+  // `category` scopes the balance sheet to the payment category that just
+  // happened (Sub Tariff / Festival / Death / Marriage). Each category
+  // shares its own dedicated PDF.
+  const params = new URLSearchParams();
+  if (category) params.set("category", category);
+  if (receipt) {
+    if (receipt.no) params.set("receipt_no", receipt.no);
+    if (receipt.amt) params.set("receipt_amt", receipt.amt);
+    if (receipt.date) params.set("receipt_date", receipt.date);
+    if (receipt.purpose) params.set("receipt_purpose", receipt.purpose);
+    if (receipt.mode) params.set("receipt_mode", receipt.mode);
+  }
+  const qs = params.toString();
+  const base = (apiBase || API_BASE || "").replace(/\/$/, "");
+  return `${base}/api/collection/public/member_statement_pdf/${token}/${qs ? `?${qs}` : ""}`;
 };
 
-const buildInterestStatementLink = (token) => {
-  const origin =
-    typeof window !== "undefined" && window.location?.origin
-      ? window.location.origin
-      : "";
-  return `${origin}/interest-statement/${token}`;
+const buildInterestStatementLink = (token, interestType, interestId, receipt, apiBase) => {
+  // Direct-PDF URL for interest borrowers (same rationale as above).
+  const params = new URLSearchParams();
+  if (receipt) {
+    if (receipt.no) params.set("receipt_no", receipt.no);
+    if (receipt.amt) params.set("receipt_amt", receipt.amt);
+    if (receipt.date) params.set("receipt_date", receipt.date);
+    if (receipt.purpose) params.set("receipt_purpose", receipt.purpose);
+    if (receipt.mode) params.set("receipt_mode", receipt.mode);
+  }
+  const qs = params.toString();
+  const base = (apiBase || API_BASE || "").replace(/\/$/, "");
+  return `${base}/api/collection/public/interest_statement_pdf/${token}/${qs ? `?${qs}` : ""}`;
 };
 
 const pad = (s, n) => {
@@ -90,13 +111,78 @@ const buildMessage = ({
   payDate,
   templeName,
   link,
+  purpose,
+  collectionNo,
+  paymentMode,
+  baseAmt,
+  interestAmt,
+  penaltyAmt,
+  statement,
+  isInterest,
 }) => {
-  // Minimal WhatsApp message — greeting + link + sign-off.
-  // The full 1-year balance sheet lives on the public page at `link`.
-  return [
-    `Dear ${name}, thanks for your payment of \u20B9${paidAmt} on ${payDate}.`,
+  // Composite "Share Statement" WhatsApp message = receipt + 1-year
+  // statement summary + pending amount + link to the customer's Balance
+  // Sheet page. Sent from Collection History → Print → Share Statement.
+
+  // ---- Receipt block --------------------------------------------------
+  const purposeLine = purpose ? ` for ${purpose}` : "";
+  const modeLine = paymentMode ? ` (${paymentMode})` : "";
+  const refLine = collectionNo ? `\nReceipt #: ${collectionNo}` : "";
+  const receiptLines = [
+    `*Payment Receipt*`,
     ``,
-    `Full details: ${link}`,
+    `Dear ${name},`,
+    `Thanks for your payment of \u20B9${paidAmt}${purposeLine} on ${payDate}${modeLine}.` +
+      refLine,
+  ];
+  const showBreakdown =
+    (Number(interestAmt) || 0) > 0 || (Number(penaltyAmt) || 0) > 0;
+  const breakdownLines = showBreakdown
+    ? [
+        ``,
+        `Breakdown:`,
+        `- Amount: \u20B9${fmtAmt(baseAmt)}`,
+        Number(interestAmt) > 0 ? `- Interest: \u20B9${fmtAmt(interestAmt)}` : null,
+        Number(penaltyAmt) > 0 ? `- Fine: \u20B9${fmtAmt(penaltyAmt)}` : null,
+      ].filter(Boolean)
+    : [];
+
+  // ---- 1-year statement summary --------------------------------------
+  const t = statement?.totals || {};
+  const statementLines = [
+    ``,
+    `*1-Year Statement*`,
+    `Total Received: \u20B9${fmtAmt(t.amount)} (${t.count || 0} payments)`,
+  ];
+
+  // ---- Pending amount -------------------------------------------------
+  const pendingLines = [];
+  if (isInterest && statement?.outstanding) {
+    const outs = statement.outstanding;
+    const totalOutstanding =
+      Number(outs.balance_amt || 0) + Number(outs.penalty_balance_amt || 0);
+    if (totalOutstanding > 0) {
+      pendingLines.push(
+        `Pending: \u20B9${fmtAmt(totalOutstanding)} ` +
+          `(Principal \u20B9${fmtAmt(outs.principal_balance)} + ` +
+          `Penalty \u20B9${fmtAmt(outs.penalty_balance_amt)})`
+      );
+    }
+  } else if (!isInterest && statement?.pending_dues?.Total !== undefined) {
+    const pendingTotal = Number(statement.pending_dues.Total || 0);
+    if (pendingTotal > 0) {
+      pendingLines.push(`Pending Amount: \u20B9${fmtAmt(pendingTotal)}`);
+    }
+  }
+
+  return [
+    ...receiptLines,
+    ...breakdownLines,
+    ...statementLines,
+    ...pendingLines,
+    ``,
+    `View full balance sheet: ${link}`,
+    ``,
     `— ${templeName || "our Temple"}`,
   ].join("\n");
 };
@@ -104,7 +190,11 @@ const buildMessage = ({
 /**
  * Compose a concise payment-receipt WhatsApp message (TC_COLLECTION_001).
  * No balance sheet, no ledger totals, no public link — just:
- *   thank-you · amount · date · purpose · temple sign-off.
+ *   thank-you · amount · date · purpose · fine / interest breakdown ·
+ *   temple sign-off.
+ *
+ * QA Bug 5/6 — Fine amount is now surfaced in the receipt whenever a
+ * penalty (or interest) is charged so the payer can see the split.
  */
 const buildReceiptMessage = ({
   name,
@@ -114,16 +204,31 @@ const buildReceiptMessage = ({
   purpose,
   collectionNo,
   paymentMode,
+  interestAmt,
+  penaltyAmt,
+  baseAmt,
 }) => {
   const purposeLine = purpose ? ` for ${purpose}` : "";
   const modeLine = paymentMode ? ` (${paymentMode})` : "";
   const refLine = collectionNo ? `\nReceipt #: ${collectionNo}` : "";
+  const showBreakdown =
+    (Number(interestAmt) || 0) > 0 || (Number(penaltyAmt) || 0) > 0;
+  const breakdownLines = showBreakdown
+    ? [
+        ``,
+        `Breakdown:`,
+        `- Amount: \u20B9${fmtAmt(baseAmt)}`,
+        Number(interestAmt) > 0 ? `- Interest: \u20B9${fmtAmt(interestAmt)}` : null,
+        Number(penaltyAmt) > 0 ? `- Fine: \u20B9${fmtAmt(penaltyAmt)}` : null,
+      ].filter(Boolean)
+    : [];
   return [
     `*Payment Receipt*`,
     ``,
     `Dear ${name},`,
     `Thanks for your payment of \u20B9${paidAmt}${purposeLine} on ${payDate}${modeLine}.` +
       refLine,
+    ...breakdownLines,
     ``,
     `— ${templeName || "our Temple"}`,
   ].join("\n");
@@ -206,6 +311,9 @@ const WhatsappStatementButton = ({
           purpose,
           collectionNo: CollectionRecord?.collaction_no,
           paymentMode: CollectionRecord?.payment_mode,
+          interestAmt: interestAmount,
+          penaltyAmt: penaltyAmount,
+          baseAmt: amount,
         });
         const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`;
         window.open(url, "_blank", "noopener,noreferrer");
@@ -215,20 +323,67 @@ const WhatsappStatementButton = ({
       let link;
       let fallbackName;
       let fallbackMobile;
+      let statement = null;
       if (isInterest) {
         const { data: tokenResp } = await axios.get(
           `${API_BASE}/api/collection/interest_statement/token/${interestId}/`
         );
-        link = buildInterestStatementLink(tokenResp.token);
+        const purpose =
+          CollectionRecord?.festival_name ||
+          CollectionRecord?.sub_tariff_name ||
+          CollectionRecord?.marriage_name ||
+          CollectionRecord?.death_name ||
+          CollectionRecord?.collection_category ||
+          "";
+        link = buildInterestStatementLink(tokenResp.token, category, interestId, {
+          no: CollectionRecord?.collaction_no || "",
+          amt: fmtAmt(paidAmt),
+          date: CollectionRecord?.pay_date || "",
+          purpose,
+          mode: CollectionRecord?.payment_mode || "",
+        });
         fallbackName = tokenResp.name;
         fallbackMobile = tokenResp.mobile;
+        try {
+          const { data: stmt } = await axios.get(
+            `${API_BASE}/api/collection/public/interest_statement/${tokenResp.token}/`
+          );
+          statement = stmt;
+        } catch (_) { /* statement optional */ }
       } else {
         const { data: tokenResp } = await axios.get(
           `${API_BASE}/api/collection/member_statement/token/${memberId}/`
         );
-        link = buildMemberStatementLink(tokenResp.token);
+        // Bundle the current receipt details into the URL so the landing
+        // page can render Receipt + Balance Sheet in one PDF.
+        const purpose =
+          CollectionRecord?.festival_name ||
+          CollectionRecord?.sub_tariff_name ||
+          CollectionRecord?.marriage_name ||
+          CollectionRecord?.death_name ||
+          CollectionRecord?.collection_category ||
+          "";
+        link = buildMemberStatementLink(
+          tokenResp.token,
+          memberId,
+          {
+            no: CollectionRecord?.collaction_no || "",
+            amt: fmtAmt(paidAmt),
+            date: CollectionRecord?.pay_date || "",
+            purpose,
+            mode: CollectionRecord?.payment_mode || "",
+          },
+          undefined,
+          category,
+        );
         fallbackName = tokenResp.name;
         fallbackMobile = tokenResp.mobile;
+        try {
+          const { data: stmt } = await axios.get(
+            `${API_BASE}/api/collection/public/member_statement/${tokenResp.token}/`
+          );
+          statement = stmt;
+        } catch (_) { /* statement optional */ }
       }
       const phone = String(rawMobile || fallbackMobile || "").replace(/\D/g, "");
       const waNumber = phone.length === 10 ? `91${phone}` : phone;
@@ -240,12 +395,27 @@ const WhatsappStatementButton = ({
       }
       const name =
         CollectionRecord?.member_name || fallbackName || "Customer";
+      const purpose =
+        CollectionRecord?.festival_name ||
+        CollectionRecord?.sub_tariff_name ||
+        CollectionRecord?.marriage_name ||
+        CollectionRecord?.death_name ||
+        CollectionRecord?.collection_category ||
+        "";
       const msg = buildMessage({
         name,
         paidAmt: fmtAmt(paidAmt),
         payDate: CollectionRecord?.pay_date,
         templeName,
         link,
+        purpose,
+        collectionNo: CollectionRecord?.collaction_no,
+        paymentMode: CollectionRecord?.payment_mode,
+        baseAmt: amount,
+        interestAmt: interestAmount,
+        penaltyAmt: penaltyAmount,
+        statement,
+        isInterest,
       });
       const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`;
       window.open(url, "_blank", "noopener,noreferrer");

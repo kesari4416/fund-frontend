@@ -6,7 +6,7 @@ import React, { Fragment, useEffect, useState } from 'react'
 import { MemberBalanceReport, MemberBalanceSheet, MemberPaidHistory } from './MemberProfileTabs'
 import { StyledHeading } from '../style'
 import request from '@request/request'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { APIURLS } from '@request/apiUrls/urls'
 import successHandler from '@request/successHandler'
 import styled from 'styled-components'
@@ -30,6 +30,11 @@ const MemberProfile = () => {
 
     const [form] = Form.useForm()
     const { id } = useParams()
+    // WhatsApp share links come in as /memberProfileView/:id?tab=balance so
+    // the balance sheet opens straight away without the user hunting for the
+    // right tab. Default remains the Report tab for regular navigation.
+    const [searchParams] = useSearchParams()
+    const initialTabKey = searchParams.get('tab') === 'balance' ? '3' : '1'
 
     const [MemberDetails, setMemberDetails] = useState({})
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -176,6 +181,26 @@ const MemberProfile = () => {
                                     {/* <h3>D.O.B : <span> {Memberprofile?.member_dob}</span></h3> */}
                                     <h3>Joining Amount : <span> {Memberprofile?.member_joining_amt}</span>&nbsp;{Memberprofile?.member_joining_amt > 0 && <span style={{ cursor: 'pointer'}} onClick={handlePrintClick}><FcPrint size={25} /></span>}</h3>
                                     {/* <h3>Opening Balance Amount : <span>{Memberprofile?.member_balance_amt}</span></h3> */}
+                                    {/* QA Bug 1 — separate "Total Due" and "Total Collected"
+                                        so operators can quickly reconcile a member's
+                                        historical dues against payments received. */}
+                                    <h3 data-testid="member-total-collected">
+                                        Total Collected :
+                                        <span>
+                                            &nbsp;₹&nbsp;
+                                            {Number(MemberDetails?.paid_amt_total || 0).toFixed(2)}
+                                        </span>
+                                    </h3>
+                                    <h3 data-testid="member-total-due">
+                                        Total Due :
+                                        <span>
+                                            &nbsp;₹&nbsp;
+                                            {(
+                                                Number(MemberDetails?.paid_amt_total || 0) +
+                                                Number(MemberDetails?.temple_mem_pending_amt || 0)
+                                            ).toFixed(2)}
+                                        </span>
+                                    </h3>
                                     <h3>Total Pending Balance : <span>₹&nbsp;{MemberDetails?.temple_mem_pending_amt}</span></h3>
                                 </Totalstyle>
                             </Col>
@@ -212,7 +237,7 @@ const MemberProfile = () => {
                     </Col>
                     {Memberprofile?.member_tax_eligible &&
                         <Col span={24} md={24}>
-                            <CustomTabs tabs={TabOptions} />
+                            <CustomTabs tabs={TabOptions} defaultActiveKey={initialTabKey} />
                         </Col>}
                 </CustomRow>
 
