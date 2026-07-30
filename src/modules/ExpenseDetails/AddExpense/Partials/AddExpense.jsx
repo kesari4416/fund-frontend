@@ -59,7 +59,7 @@ export const AddExpenseForm = ({
   const [expeNameTrigger, setExpeNameTrigger] = useState(0);
   const [expeCategyTrigger, setExpeCategyTrigger] = useState(0);
   const [transactionType, setTransactionType] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedExpName, setSelectedExpName] = useState([]);
   const [selectedBankDetails, setSelectedBankDetails] = useState([]);
   const [selectedfestivalType, setSelectedFestivaltype] = useState([]);
@@ -165,7 +165,13 @@ export const AddExpenseForm = ({
 
 
   useEffect(() => {
-    form.setFieldsValue({ category_name: selectedCategory });
+    // Only push a string value; skip when selectedCategory is null/empty
+    // (initial mount, or after subcategory switch cleared it) — otherwise
+    // an array [] would land in the payload and DRF rejects it with
+    // "category_name: Not a valid string."
+    if (typeof selectedCategory === "string" && selectedCategory.length > 0) {
+      form.setFieldsValue({ category_name: selectedCategory });
+    }
     if (UpdateRecord) {
       form.setFieldsValue({ category_name: UpdateRecord?.category_name });
     }
@@ -356,12 +362,26 @@ export const AddExpenseForm = ({
       })
       .catch(function (error) {
         setExpenseLoading(false);
-        if (error.response.status === 400) {
+        if (error.response?.status === 400) {
+          // Backend returned a DRF validation error – surface every field
+          // error via toast so submit is never silent. Falls back to a
+          // generic message if the shape is unexpected.
           if (error.response.data?.date) {
             toast.error(error.response.data?.date[0]);
-          } 
+          } else if (error.response.data && typeof error.response.data === "object") {
+            const first = Object.entries(error.response.data)[0];
+            if (first) {
+              const [field, msgs] = first;
+              const msg = Array.isArray(msgs) ? msgs[0] : String(msgs);
+              toast.error(`${field}: ${msg}`);
+            } else {
+              toast.error("Please check the form and try again");
+            }
+          } else {
+            toast.error("Please check the form and try again");
+          }
         }
-       else if(error.response.status === 406){
+       else if(error.response?.status === 406){
           toast.error(error.response.data.message);
         }
         else{
@@ -388,12 +408,23 @@ export const AddExpenseForm = ({
         return response.data;
       })
       .catch(function (error) {
-        if (error.response.status === 400) {
+        if (error.response?.status === 400) {
           if (error.response.data?.date) {
             toast.error(error.response.data?.date[0]);
-          } 
+          } else if (error.response.data && typeof error.response.data === "object") {
+            const first = Object.entries(error.response.data)[0];
+            if (first) {
+              const [field, msgs] = first;
+              const msg = Array.isArray(msgs) ? msgs[0] : String(msgs);
+              toast.error(`${field}: ${msg}`);
+            } else {
+              toast.error("Please check the form and try again");
+            }
+          } else {
+            toast.error("Please check the form and try again");
+          }
         }
-        else if (error.response.status === 302) {
+        else if (error.response?.status === 302) {
           toast.warn(error.response?.data?.message);
         } else {
           return errorHandler(error);
@@ -401,23 +432,15 @@ export const AddExpenseForm = ({
       });
   };
   const onFinish = (data) => {
-    let NewData;
-  
-    if (TransactionData === "Online") {
-      NewData = {
-        ...data,
-        date: expenseDate,
-        transaction_date: transactionDate,
+    // Always build the payload — previously we only built `NewData` when
+    // TransactionData was "Online" or "Offline", causing the submit to
+    // silently no-op if the payment_mode state hadn't been captured yet.
+    const NewData = {
+      ...data,
+      date: expenseDate,
+      transaction_date: transactionDate,
+    };
 
-      };
-    } else if (TransactionData === "Offline") {
-      NewData = {
-        ...data,
-        date: expenseDate,
-        transaction_date: transactionDate,
-      };
-    }
-  
     if (UpdateRecord) {
       EditExpense(NewData);
     } else {
@@ -474,7 +497,7 @@ export const AddExpenseForm = ({
                 // Subcategory changes — prevents stale FK / label carrying
                 // over between Temple and Chit Fund selections.
                 form.setFieldsValue({ category: undefined, category_name: undefined });
-                setSelectedCategory([]);
+                setSelectedCategory(null);
               }}
               rules={[
                 {
