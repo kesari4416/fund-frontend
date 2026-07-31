@@ -897,7 +897,14 @@ export const Interest = ({ RecordData, ClosUpdaForm, manageTrigger }) => {
             }}
             onFinish={onFinish}
             onFinishFailed={onFinishFailed}
-            initialValues={{ interest_date: dayjs() }}
+            initialValues={{
+                interest_date: dayjs(),
+                // Owner rule (Feb 2026): default penalty is a fixed
+                // 3 % of interest balance, applied after due date. The
+                // fields stay editable so the operator can override.
+                penalty_amount: 3,
+                penalty_type: 'percentage',
+            }}
         >
             <CustomCardView>
                 <CustomRow space={[12, 12]}>
